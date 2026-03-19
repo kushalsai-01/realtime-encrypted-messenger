@@ -1,62 +1,77 @@
-# Realtime Encrypted Chat
+# realtime-chat-app
 
-Minimal two-user end-to-end encrypted chat built with a custom WebSocket server, Redis room storage, browser Web Crypto, and a dark UI.
+End-to-end encrypted real-time chat. Messages and files (images, 
+video, PDF) are encrypted with AES-256-GCM in the browser. 
+The server relays only ciphertext — it never sees plaintext.
 
-## Project structure
+## Tech stack
+- **Frontend**: React + Vite, Web Crypto API (AES-GCM, PBKDF2)
+- **Backend**: Node.js, WebSocket (ws), Redis
+- **Infra**: Render (backend + Redis), Render Static Sites (frontend)
 
-- server: Node WebSocket server and Redis room management
-- client: React + Vite SPA with AES‑GCM encryption in the browser
-- nginx: reverse proxy and WebSocket upgrade config
-- terraform: AWS EC2, security group, and ElastiCache Redis
-- docker-compose.yml: local Redis + server
+## Architecture
+- User creates room → gets 20-char base32 room code
+- Both users derive AES-256 key from room code via PBKDF2 (100k iterations)
+- All encryption/decryption happens in browser — server never touches key
+- Files chunked into 16KB pieces, each chunk encrypted before sending
+
+## Security
+- AES-256-GCM authenticated encryption (tamper-detectable)
+- Room codes: 20-char base32 (~100 bits entropy)
+- PBKDF2 key derivation (100,000 iterations)
+- Sliding-window rate limiting per connection
+- Origin validation on WebSocket upgrade
+- Input validation on all WebSocket message fields
 
 ## Local development
 
+### Prerequisites
+- Node.js 20+
+- Redis running on localhost:6379
+  - Windows: https://github.com/tporadowski/redis/releases
+  - Or use Docker: docker run -p 6379:6379 redis:alpine
+
+### Run
 ```bash
-cd realtime-chat
-cp .env.example .env
-
-docker compose up -d
-
+# Terminal 1 — backend
 cd server
 npm install
 npm run dev
 
-cd ../client
+# Terminal 2 — frontend  
+cd client
 npm install
 npm run dev
 ```
 
-Client runs on http://localhost:5173 and server on ws://localhost:3001/ws.
+Open http://localhost:5173
 
-## Three-day deployment sequence (after local dev works)
+## DevOps & Infrastructure
 
-Day 1: finish local implementation and testing.
+- **Docker**: Containerized Node.js server with non-root user
+- **Docker Compose**: Local development with Redis + server orchestration  
+- **GitHub Actions**: 
+  - CI pipeline: runs Jest tests against Redis, builds React app, validates Docker image
+  - CD pipeline: auto-deploys to Render on push to main via deploy hooks, runs health check
+- **Kubernetes**: Deployment, Service, Ingress (WebSocket-compatible), HPA, Secrets manifests
 
-Day 2:
+## Local dev with Docker
+
+Requires Docker Desktop.
 
 ```bash
-cd terraform
-terraform init
-terraform apply
-
-ssh -i ~/.ssh/id_rsa ec2-user@$(terraform output -raw server_ip)
-
-git clone YOUR_REPO && cd realtime-chat/server
-npm install
-REDIS_URL=redis://ELASTICACHE_HOST:6379 pm2 start index.js --name chat-server
-pm2 save && pm2 startup
-
-sudo cp ../nginx/chat.conf /etc/nginx/conf.d/
-sudo nginx -t && sudo systemctl reload nginx
-
-sudo certbot --nginx -d your-domain.com
-
-cd ../client
-npm install
-npm run build
-sudo mkdir -p /var/www/chat
-sudo cp -r dist /var/www/chat/dist
+docker compose up
+# Server at http://localhost:3001
+# Redis at localhost:6379
 ```
 
-Day 3: monitoring, tuning security group rules, and adding metrics or logging as needed.
+Run the React client separately as described above.
+
+## Deployment (Render)
+
+See DEPLOY.md
+
+## Known limitations (free tier)
+- Backend spins down after 15 min inactivity on Render free tier
+- First request after spin-down takes ~30s
+- Redis free tier has 25MB storage limit
