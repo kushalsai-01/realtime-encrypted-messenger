@@ -1,33 +1,31 @@
-import { useEffect, useRef, useState } from 'react'
-import { connect } from '../services/wsClient.js'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { SocketManager } from '../services/wsClient.js'
 
-export function useWebSocket({ userId, decrypt }) {
+export function useWebSocket({ userId, onMessage, onPresence, onTyping, onReadReceipt }) {
   const [status, setStatus] = useState('connecting')
-  const wsRef = useRef(null)
+  const managerRef = useRef(null)
 
   useEffect(() => {
-    const ws = connect({ userId })
-    wsRef.current = ws
-    ws.onopen = () => setStatus('connected')
-    ws.onclose = () => setStatus('disconnected')
-    ws.onerror = () => setStatus('error')
-    ws.onmessage = async (event) => {
-      try {
-        const packet = JSON.parse(event.data)
-        if (packet?.data?.ciphertext && packet?.data?.iv) {
-          await decrypt(packet.data.ciphertext, packet.data.iv)
-        }
-      } catch {
-        setStatus('error')
-      }
-    }
-    return () => ws.close()
-  }, [userId, decrypt])
+    if (!userId) return
 
-  function send(data) {
-    const ws = wsRef.current
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data))
-  }
+    const manager = new SocketManager({
+      userId,
+      onMessage,
+      onPresence,
+      onTyping,
+      onReadReceipt,
+      onConnect: () => setStatus('connected'),
+      onDisconnect: (info) => setStatus(info?.permanent ? 'failed' : 'reconnecting')
+    })
+    managerRef.current = manager
+    manager.connect()
+
+    return () => manager.disconnect()
+  }, [userId])
+
+  const send = useCallback((type, payload) => {
+    managerRef.current?.send(type, payload)
+  }, [])
 
   return { status, send }
 }

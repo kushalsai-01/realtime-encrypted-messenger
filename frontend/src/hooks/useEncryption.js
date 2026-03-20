@@ -1,30 +1,23 @@
-import { useEffect, useRef } from 'react'
-import { deriveKey } from '../crypto/keyManager.js'
-import { decryptText, encryptText } from '../crypto/cipher.js'
+import { useCallback } from 'react'
+import { encryptText, decryptText } from '../crypto/cipher.js'
+import { getSharedKey } from '../services/keyExchange.js'
 
-export function useEncryption(roomSecret) {
-  const keyRef = useRef(null)
+export function useEncryption(myUserId) {
+  const encrypt = useCallback(
+    async (text, recipientId) => {
+      const key = await getSharedKey(myUserId, recipientId)
+      return encryptText(text, key)
+    },
+    [myUserId]
+  )
 
-  useEffect(() => {
-    let alive = true
-    deriveKey(roomSecret).then((k) => {
-      if (alive) keyRef.current = k
-    })
-    return () => {
-      alive = false
-      keyRef.current = null
-    }
-  }, [roomSecret])
-
-  async function encrypt(text) {
-    if (!keyRef.current) throw new Error('Encryption key not ready')
-    return encryptText(text, keyRef.current)
-  }
-
-  async function decrypt(ciphertext, iv) {
-    if (!keyRef.current) throw new Error('Encryption key not ready')
-    return decryptText(ciphertext, iv, keyRef.current)
-  }
+  const decrypt = useCallback(
+    async (ciphertext, iv, senderId) => {
+      const key = await getSharedKey(myUserId, senderId)
+      return decryptText(ciphertext, iv, key)
+    },
+    [myUserId]
+  )
 
   return { encrypt, decrypt }
 }
