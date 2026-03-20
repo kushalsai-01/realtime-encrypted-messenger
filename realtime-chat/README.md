@@ -1,62 +1,115 @@
-# Realtime Encrypted Chat
+# realtime-encrypted-messenger
 
-Minimal two-user end-to-end encrypted chat built with a custom WebSocket server, Redis room storage, browser Web Crypto, and a dark UI.
+Real-time end-to-end encrypted chat. Messages and files 
+(images, video, PDF) are encrypted with AES-256-GCM 
+entirely in the browser. The server only relays ciphertext.
 
-## Project structure
+Live demo: (add your Render URL here after deployment)
 
-- server: Node WebSocket server and Redis room management
-- client: React + Vite SPA with AES‑GCM encryption in the browser
-- nginx: reverse proxy and WebSocket upgrade config
-- terraform: AWS EC2, security group, and ElastiCache Redis
-- docker-compose.yml: local Redis + server
+---
+
+## How it works
+
+1. User A creates a room — gets a 20-char base32 room code
+2. User B joins with that code
+3. Both browsers derive the same AES-256 key from the 
+   room code using PBKDF2 (100,000 iterations)
+4. All messages and files are encrypted before leaving 
+   the browser — the server never sees plaintext
+
+## Tech stack
+
+**Frontend**
+- React + Vite
+- Web Crypto API — AES-256-GCM encryption, PBKDF2 key derivation
+- WebSocket client with exponential backoff reconnection
+
+**Backend**
+- Node.js (ESM) + ws WebSocket server
+- Redis — room state with 24h TTL
+- Sliding-window rate limiting
+- Input validation + origin checks
+
+**DevOps**
+- Docker — containerized server (Alpine, non-root user)
+- Docker Compose — local dev orchestration with Redis
+- GitHub Actions — CI (tests + build + Docker) and CD (auto-deploy to Render)
+- Kubernetes manifests — Deployment, Service, Ingress, HPA (2–10 pods)
+
+---
 
 ## Local development
 
+**Prerequisites**
+- Node.js 20+
+- Redis on localhost:6379
+
+**Option A — plain Node**
 ```bash
-cd realtime-chat
-cp .env.example .env
+# Terminal 1
+cd server && npm install && npm run dev
 
-docker compose up -d
-
-cd server
-npm install
-npm run dev
-
-cd ../client
-npm install
-npm run dev
+# Terminal 2
+cd client && npm install && npm run dev
 ```
 
-Client runs on http://localhost:5173 and server on ws://localhost:3001/ws.
-
-## Three-day deployment sequence (after local dev works)
-
-Day 1: finish local implementation and testing.
-
-Day 2:
-
+**Option B — Docker Compose**
 ```bash
-cd terraform
-terraform init
-terraform apply
-
-ssh -i ~/.ssh/id_rsa ec2-user@$(terraform output -raw server_ip)
-
-git clone YOUR_REPO && cd realtime-chat/server
-npm install
-REDIS_URL=redis://ELASTICACHE_HOST:6379 pm2 start index.js --name chat-server
-pm2 save && pm2 startup
-
-sudo cp ../nginx/chat.conf /etc/nginx/conf.d/
-sudo nginx -t && sudo systemctl reload nginx
-
-sudo certbot --nginx -d your-domain.com
-
-cd ../client
-npm install
-npm run build
-sudo mkdir -p /var/www/chat
-sudo cp -r dist /var/www/chat/dist
+docker compose up
+# Then in another terminal:
+cd client && npm run dev
 ```
 
-Day 3: monitoring, tuning security group rules, and adding metrics or logging as needed.
+Open http://localhost:5173
+
+---
+
+## Security
+
+- AES-256-GCM authenticated encryption (tamper-detectable)
+- PBKDF2 key derivation, 100k iterations
+- 20-char base32 room codes (~100 bits entropy)
+- Key never leaves the browser
+- Rate limiting: 5 room creates/min, 60 messages/min per connection
+- Origin validation on WebSocket upgrade
+- All WebSocket message fields validated (type, UUID, length)
+
+---
+
+## Deployment
+
+Deployed with **Railway (backend + Redis)** and **Vercel (frontend)**.
+
+### Backend → Railway
+1. Create a new Railway project and deploy from GitHub (set root to `server`).
+2. Add environment variables:
+   - `NODE_ENV=production`
+   - `REDIS_URL=<your redis url>`
+   - `PORT=3001`
+   - `ALLOWED_ORIGINS=https://realtime-encrypted-messenger.vercel.app` (or your actual Vercel URL)
+3. Confirm `/health` returns `200`.
+
+After Railway is deployed, copy the backend URL.
+
+### Frontend → Vercel
+1. Create a new Vercel Static Site and import from GitHub.
+2. Root directory: `client`
+3. Framework preset: `Vite`
+4. Build command: `npm run build`
+5. Output directory: `dist`
+6. Environment variables:
+   - `VITE_WS_URL=wss://<your-railway-backend-host>/`
+
+Redeploy after updating env vars.
+
+---
+
+## GitHub Actions secrets needed
+
+Add these in repo Settings → Secrets → Actions:
+
+| Secret | Where to get it |
+|--------|----------------|
+| RENDER_BACKEND_DEPLOY_HOOK | Render backend → Settings → Deploy Hook |
+| RENDER_FRONTEND_DEPLOY_HOOK | Render static site → Settings → Deploy Hook |
+| BACKEND_URL | Your Render backend URL |

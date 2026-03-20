@@ -2,11 +2,18 @@ import { randomBytes } from 'crypto'
 import redis from './redis-client.js'
 
 const ROOM_TTL_SECONDS = 86400
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
+/**
+ * Generate a 20 character base32 room code for higher entropy.
+ */
 function generateRoomCode() {
-  const bytes = randomBytes(3)
-  const num = ((bytes[0] << 16) | (bytes[1] << 8) | bytes[2]) % 900000 + 100000
-  return num.toString()
+  const bytes = randomBytes(20)
+  let out = ''
+  for (let i = 0; i < bytes.length && out.length < 20; i++) {
+    out += BASE32_ALPHABET[bytes[i] % BASE32_ALPHABET.length]
+  }
+  return out
 }
 
 export async function createRoom(creatorId) {

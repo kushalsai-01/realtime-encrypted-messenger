@@ -1,3 +1,5 @@
+import { connectWs } from './services/wsClient'
+
 export class ChatSocket {
   constructor({ roomCode, userId, onMessage, onPresence, onError, onConnect }) {
     this.roomCode = roomCode
@@ -8,19 +10,23 @@ export class ChatSocket {
     this.onConnect = onConnect
     this.reconnectDelay = 1000
     this.maxReconnectDelay = 30000
+    this.maxAttempts = 10
+    this.attempts = 0
     this.shouldReconnect = true
     this.ws = null
     this.connect()
   }
 
   connect() {
-    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3001'
-    const url = `${wsUrl}/ws?userId=${this.userId}&room=${this.roomCode || ''}`
-
-    this.ws = new WebSocket(url)
+    this.ws = connectWs({
+      userId: this.userId,
+      roomCode: this.roomCode || ''
+    })
 
     this.ws.onopen = () => {
       this.reconnectDelay = 1000
+      this.attempts = 0
+      // resetting attempts on successful connection prevents permanent lockout
       this.onConnect?.()
     }
 
@@ -45,6 +51,10 @@ export class ChatSocket {
     switch (message.type) {
       case 'MESSAGE':
         return this.onMessage?.(message)
+      case 'FILE_CHUNK':
+      case 'FILE_TRANSFER_COMPLETE':
+      case 'FILE_TRANSFER_ERROR':
+        return this.onMessage?.(message)
       case 'PEER_JOINED':
         return this.onPresence?.('joined', message.payload)
       case 'PEER_LEFT':
@@ -63,6 +73,14 @@ export class ChatSocket {
   }
 
   scheduleReconnect() {
+    this.attempts += 1
+    if (this.attempts > this.maxAttempts) {
+      this.shouldReconnect = false
+      // surfaces a clear signal to the UI when reconnection has failed repeatedly
+      this.onError?.('MAX_RECONNECT_EXCEEDED')
+      return
+    }
+    this.onError?.('RECONNECTING')
     const jitter = Math.random() * 1000
     const delay = Math.min(this.reconnectDelay + jitter, this.maxReconnectDelay)
     setTimeout(() => this.connect(), delay)

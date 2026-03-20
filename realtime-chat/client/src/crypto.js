@@ -43,3 +43,28 @@ export async function decryptMessage(key, iv, ciphertext) {
   )
   return new TextDecoder().decode(decrypted)
 }
+
+/**
+ * Encrypt a binary file payload with AES-GCM.
+ * Using the same Web Crypto primitives as messages keeps the E2EE model consistent.
+ * @param {ArrayBuffer} buffer
+ * @param {CryptoKey} key
+ * @returns {Promise<{ encryptedBuffer: ArrayBuffer, iv: Uint8Array }>}
+ */
+export async function encryptFile(buffer, key) {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const encryptedBuffer = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, buffer)
+  return { encryptedBuffer, iv }
+}
+
+/**
+ * Decrypt an AES-GCM encrypted file payload back to raw bytes.
+ * This allows the receiver to reconstruct the original file without the server ever seeing plaintext.
+ * @param {ArrayBuffer} encryptedBuffer
+ * @param {Uint8Array} iv
+ * @param {CryptoKey} key
+ * @returns {Promise<ArrayBuffer>}
+ */
+export async function decryptFile(encryptedBuffer, iv, key) {
+  return crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encryptedBuffer)
+}

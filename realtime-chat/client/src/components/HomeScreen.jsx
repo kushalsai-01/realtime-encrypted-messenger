@@ -26,7 +26,7 @@ export default function HomeScreen({ userId, onRoomCreated, onRoomJoined }) {
   }
 
   function joinRoom() {
-    if (joinCode.length !== 6) return setError('Code must be 6 digits')
+    if (joinCode.length !== 20) return setError('Code must be 20 characters')
     setLoading(true)
     const socket = new ChatSocket({
       userId,
@@ -46,81 +46,51 @@ export default function HomeScreen({ userId, onRoomCreated, onRoomJoined }) {
   }
 
   return (
-    <div
-      style={{
-        maxWidth: 360,
-        margin: '80px auto',
-        padding: '32px 24px',
-        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-        background: '#050509',
-        color: '#f9f9ff',
-        borderRadius: 12,
-        boxShadow: '0 18px 45px rgba(0,0,0,0.8)',
-        border: '1px solid #11111a'
-      }}
-    >
-      <h2 style={{ marginBottom: 4, fontSize: 20, fontWeight: 600 }}>encrypted chat</h2>
-      <p style={{ fontSize: 12, color: '#8f90ff', marginBottom: 24 }}>
-        end-to-end encrypted · rooms self-destruct when empty
-      </p>
+    <div className="centered">
+      <div>
+        <div className="logo">
+          <div className="logo-title">encrypted chat</div>
+          <div className="logo-subtitle">
+            <span aria-hidden="true">🔒</span>
+            <span>end-to-end encrypted · zero knowledge</span>
+          </div>
+        </div>
 
-      <button
-        onClick={createRoom}
-        disabled={loading}
-        style={{
-          width: '100%',
-          padding: '12px',
-          marginBottom: 16,
-          cursor: loading ? 'default' : 'pointer',
-          fontSize: 14,
-          fontWeight: 500,
-          borderRadius: 999,
-          border: 'none',
-          background: loading ? '#20202a' : '#f5f5ff',
-          color: loading ? '#7c7cff' : '#050509',
-          transition: 'background 0.15s ease, transform 0.1s ease',
-          transform: loading ? 'scale(1)' : 'scale(1)'
-        }}
-      >
-        {loading ? 'creating…' : 'create room'}
-      </button>
+        <div className="card">
+          <button onClick={createRoom} disabled={loading} className="btn-primary">
+            {loading ? 'creating…' : 'create room'}
+          </button>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <input
-          value={joinCode}
-          onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-          placeholder="enter 6-digit code"
-          maxLength={6}
-          style={{
-            flex: 1,
-            padding: '12px',
-            fontSize: 14,
-            letterSpacing: 4,
-            borderRadius: 999,
-            border: '1px solid #1b1b25',
-            outline: 'none',
-            background: '#030307',
-            color: '#f9f9ff'
-          }}
-        />
-        <button
-          onClick={joinRoom}
-          disabled={loading || joinCode.length !== 6}
-          style={{
-            padding: '12px 18px',
-            cursor: loading || joinCode.length !== 6 ? 'default' : 'pointer',
-            fontSize: 13,
-            borderRadius: 999,
-            border: 'none',
-            background: loading || joinCode.length !== 6 ? '#15151d' : '#2a2a3c',
-            color: '#f9f9ff'
-          }}
-        >
-          join
-        </button>
+          <div className="divider" aria-hidden="true">
+            <div className="divider-line" />
+            <div className="divider-text">or</div>
+            <div className="divider-line" />
+          </div>
+
+          <div className="field">
+            <label htmlFor="room-code" className="label">
+              room code
+            </label>
+            <div className="row">
+              <input
+                id="room-code"
+                value={joinCode}
+                onChange={(e) =>
+                  setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z2-7]/g, '').slice(0, 20))
+                }
+                placeholder="enter 20-char code"
+                maxLength={20}
+                className="input"
+              />
+              <button onClick={joinRoom} disabled={loading || joinCode.length !== 20} className="btn-secondary">
+                join
+              </button>
+            </div>
+          </div>
+
+          {error && <div className="error">{error}</div>}
+        </div>
       </div>
-
-  {error && <p style={{ color: '#ff6b81', fontSize: 12, marginTop: 4 }}>{error}</p>}
     </div>
   )
 }

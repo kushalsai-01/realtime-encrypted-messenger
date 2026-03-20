@@ -1,0 +1,13 @@
+{
+  "buildCommand": "cd realtime-chat/client && npm run build",
+  "outputDirectory": "realtime-chat/client/dist",
+  "installCommand": "cd realtime-chat/client && npm install",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+
