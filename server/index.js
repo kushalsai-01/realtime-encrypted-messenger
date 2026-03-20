@@ -12,11 +12,35 @@ const rateLimiter = new RateLimiter()
 
 const server = http.createServer((req, res) => {
   if (req.url === '/health') {
+    const origin = req.headers.origin
+    const isLocalhost =
+      origin?.startsWith('http://localhost') || origin?.startsWith('http://127.0.0.1')
+    const rawAllowed = process.env.ALLOWED_ORIGINS || ''
+    const allowedOrigins = rawAllowed
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean)
+    const allowOrigin = isLocalhost || allowedOrigins.includes(origin) ? origin : null
+
+    const corsHeaders = {
+      ...(allowOrigin ? { 'Access-Control-Allow-Origin': allowOrigin } : {}),
+      ...(allowOrigin ? { Vary: 'Origin' } : {}),
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, corsHeaders)
+      res.end()
+      return
+    }
+
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
-      'Cache-Control': 'no-store'
+      'Cache-Control': 'no-store',
+      ...corsHeaders
     })
     res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }))
     return

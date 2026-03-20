@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node --watch index.js",
     "start": "node index.js",
-    "test": "node --experimental-vm-modules ../../node_modules/.bin/jest"
+    "dev": "node --watch index.js",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest"
   },
   "dependencies": {
     "dotenv": "^16.4.0",
@@ -16,5 +16,8 @@
   "devDependencies": {
     "@jest/globals": "^30.3.0",
     "jest": "^30.3.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

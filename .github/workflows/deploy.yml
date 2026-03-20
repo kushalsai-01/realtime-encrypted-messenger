@@ -1,4 +1,4 @@
-name: Deploy to Render
+name: Deploy
 
 on:
   push:
@@ -6,31 +6,28 @@ on:
 
 jobs:
   deploy:
-    name: Trigger Render Deploy
+    name: Deploy to Render
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Deploy Backend to Render
+      - name: Deploy Backend
         run: |
-          curl -X POST "${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}" \
-            -H "Content-Type: application/json"
+          curl -X POST "${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}"
 
-      - name: Deploy Frontend to Render
+      - name: Deploy Frontend
         run: |
-          curl -X POST "${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}" \
-            -H "Content-Type: application/json"
+          curl -X POST "${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}"
 
-      - name: Wait for deployment
+      - name: Wait for deploy
         run: sleep 30
 
       - name: Health check
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" \
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             "${{ secrets.BACKEND_URL }}/health")
-          if [ "$response" != "200" ]; then
-            echo "Health check failed with status $response"
+          if [ "$STATUS" != "200" ]; then
+            echo "Health check failed: $STATUS"
             exit 1
           fi
-          echo "Health check passed"
+          echo "Deploy successful"
 

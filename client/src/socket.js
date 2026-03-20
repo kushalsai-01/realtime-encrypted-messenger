@@ -1,3 +1,5 @@
+import { connectWs } from './services/wsClient'
+
 export class ChatSocket {
   constructor({ roomCode, userId, onMessage, onPresence, onError, onConnect }) {
     this.roomCode = roomCode
@@ -16,10 +18,10 @@ export class ChatSocket {
   }
 
   connect() {
-    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3001'
-    const url = `${wsUrl}/ws?userId=${this.userId}&room=${this.roomCode || ''}`
-
-    this.ws = new WebSocket(url)
+    this.ws = connectWs({
+      userId: this.userId,
+      roomCode: this.roomCode || ''
+    })
 
     this.ws.onopen = () => {
       this.reconnectDelay = 1000
