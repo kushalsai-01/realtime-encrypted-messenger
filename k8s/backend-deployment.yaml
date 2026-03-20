@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cipherlink-backend
+  namespace: cipherlink
+  labels:
+    app: cipherlink-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cipherlink-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: cipherlink-backend
+    spec:
+      containers:
+        - name: backend
+          image: DOCKER_USERNAME/cem-backend:IMAGE_TAG
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: cipherlink-config
+            - secretRef:
+                name: cipherlink-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3

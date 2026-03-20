@@ -1,35 +1,92 @@
 version: '3.9'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cem_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cipherlink
+      POSTGRES_USER: cipherlink
+      POSTGRES_PASSWORD: devpassword123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cipherlink"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis:7-alpine
+    container_name: cem_redis
+    restart: unless-stopped
+    command: redis-server --requirepass devredispass --appendonly yes
+    volumes:
+      - redis_data:/data
     ports:
       - "6379:6379"
-
-  mongodb:
-    image: mongo:7
-    ports:
-      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "devredispass", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
     build:
       context: ./backend
-    ports:
-      - "3000:3000"
+      dockerfile: Dockerfile
+      target: runner
+    container_name: cem_backend
+    restart: unless-stopped
     env_file:
       - ./backend/.env.example
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgres://cipherlink:devpassword123@postgres:5432/cipherlink
+      REDIS_URL: redis://:devredispass@redis:6379
+    ports:
+      - "3000:3000"
     depends_on:
-      - redis
-      - mongodb
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   frontend:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - ./frontend:/app
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3000
+        VITE_WS_URL: ws://localhost:3000
+    container_name: cem_frontend
+    restart: unless-stopped
     ports:
-      - "5173:5173"
-    command: sh -c "npm install && npm run dev -- --host --port 5173"
+      - "5173:80"
     depends_on:
       - backend
 
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: cem_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  postgres_data:
+  redis_data:
