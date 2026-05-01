@@ -1,7 +1,18 @@
 import axios from 'axios'
 
+// In production these MUST be set — either via Vercel dashboard env vars
+// or via docker-compose build args. We warn loudly at startup if missing.
 export const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 export const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3000'
+
+if (import.meta.env.PROD) {
+  if (!import.meta.env.VITE_API_URL) {
+    console.error('[Config] VITE_API_URL is not set! Set it in Vercel dashboard or .env.production')
+  }
+  if (!import.meta.env.VITE_WS_URL) {
+    console.error('[Config] VITE_WS_URL is not set! Set it in Vercel dashboard or .env.production')
+  }
+}
 
 export const api = axios.create({ baseURL: `${BASE_URL}/api` })
 
@@ -24,7 +35,13 @@ api.interceptors.response.use(
   async (err) => {
     const original = err.config
     if (err.response?.status !== 401 || original._retry) return Promise.reject(err)
-    if (original.url?.includes('/auth/refresh') || original.url?.includes('/auth/login')) {
+
+    // Don't try to refresh on auth endpoints themselves
+    if (
+      original.url?.includes('/auth/refresh') ||
+      original.url?.includes('/auth/login') ||
+      original.url?.includes('/auth/register')
+    ) {
       return Promise.reject(err)
     }
 
