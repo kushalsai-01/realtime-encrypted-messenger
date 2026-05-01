@@ -7,8 +7,10 @@ export const redis = new Redis({
   token: config.UPSTASH_REDIS_REST_TOKEN
 })
 
+// Upstash uses rediss://; plain redis:// (e.g. local Docker) must not force TLS.
+const useTls = config.UPSTASH_REDIS_URL.startsWith('rediss://')
 const opts = {
-  tls: {},
+  ...(useTls ? { tls: {} } : {}),
   maxRetriesPerRequest: 3,
   retryStrategy: (t) => Math.min(t * 200, 3000)
 }

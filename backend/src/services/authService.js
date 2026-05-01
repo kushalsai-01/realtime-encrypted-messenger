@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { randomBytes, createHash } from 'crypto'
 import { v4 as uuidv4 } from 'uuid'
-import { query } from '../config/database.js'
+import { pool, query } from '../config/database.js'
 import { redis } from '../config/redis.js'
 import { config } from '../config/env.js'
 
@@ -72,34 +72,56 @@ async function issueTokens(user, meta) {
 export async function refresh(rawRefreshToken) {
   if (!rawRefreshToken) throw Object.assign(new Error('Refresh token required'), { status: 401 })
   const hash = hashToken(rawRefreshToken)
-  const result = await query(
-    `SELECT s.id, s.user_id, s.expires_at, s.device_name, s.ip_address,
-            u.email, u.display_name
-     FROM sessions s
-     JOIN users u ON u.id = s.user_id
-     WHERE s.refresh_token_hash = $1 LIMIT 1`,
-    [hash]
-  )
-  if (result.rowCount === 0) throw Object.assign(new Error('Invalid refresh token'), { status: 401 })
-  const session = result.rows[0]
-  if (new Date(session.expires_at) < new Date())
-    throw Object.assign(new Error('Refresh token expired'), { status: 401 })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await client.query(
+      `DELETE FROM sessions s
+       USING users u
+       WHERE s.refresh_token_hash = $1
+         AND s.user_id = u.id
+       RETURNING s.id, s.user_id, s.expires_at, s.device_name, s.ip_address,
+                 u.email, u.display_name`,
+      [hash]
+    )
+    if (result.rowCount === 0) throw Object.assign(new Error('Invalid refresh token'), { status: 401 })
 
-  await query('DELETE FROM sessions WHERE id = $1', [session.id])
+    const session = result.rows[0]
+    if (new Date(session.expires_at) < new Date())
+      throw Object.assign(new Error('Refresh token expired'), { status: 401 })
 
-  const user = { id: session.user_id, email: session.email, displayName: session.display_name }
-  const jti = uuidv4()
-  const accessToken = jwt.sign(
-    { sub: user.id, email: user.email, name: user.displayName, jti },
-    config.JWT_SECRET,
-    { expiresIn: config.JWT_EXPIRES_IN }
-  )
-  const { refreshToken: newRefreshToken } = await createSession(
-    user.id,
-    session.ip_address,
-    session.device_name
-  )
-  return { accessToken, refreshToken: newRefreshToken }
+    const user = { id: session.user_id, email: session.email, displayName: session.display_name }
+    const jti = uuidv4()
+    const accessToken = jwt.sign(
+      { sub: user.id, email: user.email, name: user.displayName, jti },
+      config.JWT_SECRET,
+      { expiresIn: config.JWT_EXPIRES_IN }
+    )
+
+    const newRefreshToken = randomBytes(40).toString('hex')
+    const newHash = hashToken(newRefreshToken)
+    const newSessionId = uuidv4()
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    await client.query(
+      `INSERT INTO sessions (id, user_id, refresh_token_hash, device_name, ip_address, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        newSessionId,
+        user.id,
+        newHash,
+        session.device_name || 'unknown',
+        session.ip_address || null,
+        expiresAt
+      ]
+    )
+    await client.query('COMMIT')
+    return { accessToken, refreshToken: newRefreshToken }
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
 }
 
 export async function logout(jti, rawRefreshToken) {

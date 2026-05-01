@@ -51,11 +51,12 @@ export async function searchUsers(req, res, next) {
   try {
     const { q } = req.query
     if (!q || q.length < 2) return res.json({ success: true, data: [] })
+    const safeQ = q.slice(0, 50) // IMP-G7: cap at 50 chars to prevent expensive ILIKE scans
     const result = await query(
       `SELECT id, email, display_name FROM users
        WHERE (email ILIKE $1 OR display_name ILIKE $1) AND id != $2
        LIMIT 20`,
-      [`%${q}%`, req.user.sub]
+      [`%${safeQ}%`, req.user.sub]
     )
     res.json({
       success: true,
