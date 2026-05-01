@@ -1,8 +1,37 @@
+# Dependencies
 node_modules/
+
+# Environment files (NEVER commit secrets)
 .env
 .env.local
 .env.production
+backend/.env
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+
+# Build output
 dist/
+build/
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Logs
 *.log
+npm-debug.log*
+
+# Test coverage
 coverage/
+
+# Editor
+.vscode/
+.idea/
+
+# Docker
+docker-compose.override.yml
+
+# Kubernetes — prevent committing secrets with real values
+# (use kubectl create secret instead)
+k8s/secrets-real.yaml

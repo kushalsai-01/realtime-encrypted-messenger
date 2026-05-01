@@ -1,220 +1,292 @@
-<div align="center">
-  <h1>🔐 CipherLink</h1>
-  <p><strong>Realtime End-to-End Encrypted Messenger</strong></p>
-  <p>
-    <a href="https://github.com/kushalsai-01/realtime-encrypted-messenger/actions">
-      <img src="https://github.com/kushalsai-01/realtime-encrypted-messenger/actions/workflows/ci.yml/badge.svg" alt="CI"/>
-    </a>
-    <img src="https://img.shields.io/badge/Encryption-AES--256--GCM-green" alt="AES-256-GCM"/>
-    <img src="https://img.shields.io/badge/Key_Exchange-ECDH_P--256-blue" alt="ECDH"/>
-    <img src="https://img.shields.io/badge/Node.js-20-brightgreen" alt="Node.js"/>
-  </p>
-  <p>
-    <a href="https://realtime-encrypted-messenger.vercel.app">🚀 Live Demo</a> •
-    <a href="#encryption-model">Encryption Model</a> •
-    <a href="#architecture">Architecture</a> •
-    <a href="#quick-start">Quick Start</a>
-  </p>
-</div>
+# 🔐 CipherLink — Real-Time Encrypted Messenger
 
----
+End-to-end encrypted messaging with ECDH key exchange + AES-GCM encryption, WebSocket real-time delivery, JWT auth with refresh token rotation, and horizontal scaling via Redis pub/sub.
 
-## What This Is
-
-CipherLink is a production-grade encrypted messaging app where **the server never sees your messages**. Messages are encrypted in the browser using AES-256-GCM, with keys established via ECDH P-256 key exchange. Even if the server database were fully compromised, all messages remain unreadable.
-
-**Built to demonstrate:**
-- Browser-native Web Crypto API — zero third-party crypto dependencies
-- ECDH P-256 key exchange + AES-256-GCM encryption entirely on the client
-- Private keys stored in IndexedDB — never transmitted to the server
-- Real-time WebSocket messaging (presence, typing indicators, read receipts)
-- JWT auth with refresh token rotation, concurrent refresh locking, and logout blacklisting
-- Production deployment: Docker + Kubernetes + GitHub Actions CI/CD
-
----
-
-## Encryption Model
-
-```
-Alice's Device                   Server (blind)            Bob's Device
-──────────────                   ──────────────            ────────────
-Generate ECDH keypair                                       Generate ECDH keypair
-Save private key → IndexedDB                               Save private key → IndexedDB
-    │                                                           │
-    ├─── POST /api/users/public-key ────────────────────────────┤
-    │                                                           │
-    ├─── GET Bob's public key ──────────────────────────────────►
-    │                                                           │
-ECDH(Alice.private, Bob.public) = SharedKey    ECDH(Bob.private, Alice.public) = SharedKey
-    │                                                           │
-AES-GCM.encrypt(plaintext, SharedKey) → { ciphertext, iv }     │
-    │                                                           │
-    ├─── WS { ciphertext, iv } ─────────────────────────────────►
-    │              Stores { ciphertext, iv } only               │
-    │                                           AES-GCM.decrypt(ciphertext, SharedKey) → plaintext
-```
-
-**Server stores:** `ciphertext` (base64) + `iv` (base64) + metadata (senderId, conversationId, timestamp)  
-**Server never sees:** plaintext, private keys, shared keys
+**Stack:** React (Vite) · Node.js + Express · WebSockets (ws) · PostgreSQL (Supabase) · MongoDB (Atlas) · Redis (Upstash) · Docker · Kubernetes
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    Nginx (:80)                            │
-│     Rate limiting · WS upgrade · Gzip · Security headers  │
-└──────────────┬──────────────────────┬────────────────────┘
-               │                      │
-┌──────────────▼──────┐   ┌──────────▼────────────────────┐
-│  React Frontend      │   │  Node.js Backend (:3000)       │
-│  Vite + Tailwind     │   │  Express + WebSocket (ws)      │
-│  Web Crypto API      │   │  JWT (15min) + Refresh tokens  │
-│  IndexedDB for keys  │   │  Token blacklist in Redis      │
-└─────────────────────┘   └────────────┬───────────────────┘
-                                        │
-                           ┌────────────┴──────────────────┐
-                           │  PostgreSQL  │  MongoDB  │  Redis │
-                           │  Users/Auth  │  Messages │  Cache  │
-                           │  Rooms/Keys  │  E2E only │  PubSub │
-                           └───────────────────────────────┘
+Browser (React) ──HTTPS──▶ Vercel CDN
+                           (static SPA)
+                                │
+                    REST /api ──┤
+                    WSS  /ws ───┤
+                                ▼
+                  K8s Ingress (NGINX + TLS)
+                                │
+                  ┌─────────────┴─────────────┐
+                  ▼                           ▼
+           Backend Pod 1              Backend Pod 2
+           (Node.js + ws)             (Node.js + ws)
+                  │                           │
+          Redis Pub/Sub ◀──────────────────▶ Redis Pub/Sub
+          (cross-pod WS routing)
+                  │
+        ┌─────────┼──────────┐
+        ▼         ▼          ▼
+   PostgreSQL  MongoDB    Upstash Redis
+   (Supabase)  (Atlas)   (presence/queue/
+   users/rooms messages   rate limits)
 ```
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, Vite, Tailwind CSS |
-| Encryption | Web Crypto API (ECDH P-256 + AES-256-GCM) |
-| Key storage | IndexedDB — private keys never leave the device |
-| Transport | Native WebSocket with exponential backoff reconnection |
-| Backend | Node.js 20, Express, `ws` library |
-| User/room DB | PostgreSQL on Supabase |
-| Message DB | MongoDB Atlas (ciphertext only) |
-| Cache/PubSub | Upstash Redis (presence, offline queue, token blacklist) |
-| Auth | JWT (15min) + rotating refresh tokens (30d, stored hashed in DB) |
-| DevOps | Docker, Kubernetes, GitHub Actions |
-
 ---
 
-## Features
+## Quick Start (Local Dev)
 
-- ✅ **E2E Encryption** — ECDH key exchange, AES-256-GCM messages, server is cryptographically blind
-- ✅ **Rooms + DMs** — create group rooms, open direct messages with any user
-- ✅ **Realtime** — messages, typing indicators, online/offline presence, read receipts
-- ✅ **Message reactions** — emoji quick bar (👍 ❤️ 😂 😮 😢 😡), toggleable
-- ✅ **Message delete** — soft-delete with "This message was deleted" placeholder
-- ✅ **Reply-to** — reference encrypted messages in replies
-- ✅ **Message search** — client-side full-text search after decryption
-- ✅ **Auth** — register/login, 15-min JWTs, rotating refresh tokens, session management, logout blacklist
-- ✅ **Reconnection** — exponential backoff (max 10 attempts, up to 30s delay)
-- ✅ **Notifications** — browser push notifications when tab is not focused
-- ✅ **Mobile UX** — responsive layout, iOS safe-area keyboard inset
+### Prerequisites
+- Docker Desktop
+- Node.js 20+ (for running without Docker)
 
----
-
-## Quick Start
-
+### 1. Clone and configure
 ```bash
 git clone https://github.com/kushalsai-01/realtime-encrypted-messenger.git
 cd realtime-encrypted-messenger
-
-# Copy and fill in env vars
 cp backend/.env.example backend/.env
-# Edit backend/.env with real database credentials
-
-# Start all services (Docker required)
-make up
-
-# Run database migrations
-make migrate
-
-# Open http://localhost
+# Edit backend/.env — fill in MONGODB_URI, JWT_SECRET, JWT_REFRESH_SECRET
+# All other values are pre-configured for local docker-compose
 ```
 
-**Without Docker:**
+### 2. Run database migrations
 ```bash
-cd backend && npm install && npm run dev   # terminal 1
-cd frontend && npm install && npm run dev  # terminal 2
+cd backend
+npm install
+npm run migrate
+cd ..
+```
+
+### 3. Start with Docker Compose
+```bash
+docker-compose up --build
+```
+
+Services:
+- Frontend: http://localhost:5173
+- Backend API: http://localhost:3000
+- Nginx (routes both): http://localhost:80
+
+---
+
+## Production Deployment
+
+### Target Architecture
+- **Frontend** → Vercel (automatic deployments via GitHub)
+- **Backend** → Kubernetes cluster (GKE / K3s / any managed K8s)
+
+---
+
+### Step 1: Set up your domain
+
+You need a domain for the backend API. In this guide we use `api.yourdomain.com`.
+
+Update these files with your actual domain:
+- `k8s/ingress.yaml` → replace `api.yourdomain.com`
+- `frontend/.env.production` → replace `api.yourdomain.com`
+
+---
+
+### Step 2: Build and push Docker image
+
+```bash
+# Set your Docker Hub username
+export DOCKER_USERNAME=yourusername
+
+# Build backend image
+docker build -t $DOCKER_USERNAME/cem-backend:latest ./backend
+docker push $DOCKER_USERNAME/cem-backend:latest
+
+# Build frontend image (replace with your domain)
+docker build \
+  --build-arg VITE_API_URL=https://api.yourdomain.com \
+  --build-arg VITE_WS_URL=wss://api.yourdomain.com \
+  -t $DOCKER_USERNAME/cem-frontend:latest \
+  ./frontend
+docker push $DOCKER_USERNAME/cem-frontend:latest
 ```
 
 ---
 
-## Security Properties
+### Step 3: Set up Kubernetes
 
-| Property | Implementation |
-|----------|---------------|
-| Message confidentiality | AES-256-GCM — authenticated encryption |
-| Key agreement | ECDH P-256 via Web Crypto API |
-| Forward secrecy | Per-conversation derived key (ECDH) |
-| Private key storage | IndexedDB only — never transmitted |
-| Access token TTL | 15 minutes |
-| Refresh token rotation | One-time use, hashed in DB, rotated on every use |
-| Logout security | Access token JTI blacklisted in Redis |
-| Token length | Refresh tokens = 80-char hex (cryptographically random) |
-| Transport security | HTTPS/WSS in production (TLS 1.3 via Nginx/Render) |
-| Rate limiting | 120 req/min API, 10 req/min auth, 100 req/min WS burst |
+#### 3a. Install prerequisites on your cluster
+```bash
+# Install NGINX Ingress Controller
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.0/deploy/static/provider/cloud/deploy.yaml
+
+# Install cert-manager (for automatic TLS certificates)
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml
+```
+
+#### 3b. Create Let's Encrypt ClusterIssuer
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: your-email@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+EOF
+```
+
+#### 3c. Apply K8s configs
+```bash
+# Create namespace
+kubectl apply -f k8s/namespace.yaml
+
+# Apply configmap (non-sensitive config)
+kubectl apply -f k8s/configmap.yaml
+
+# Create secrets (fill in your real values)
+kubectl create secret generic cipherlink-secrets \
+  --namespace cipherlink \
+  --from-literal=DATABASE_URL="postgresql://user:pass@db.supabase.co:5432/postgres" \
+  --from-literal=MONGODB_URI="mongodb+srv://user:pass@cluster.mongodb.net/cipherlink" \
+  --from-literal=UPSTASH_REDIS_REST_URL="https://yourdb.upstash.io" \
+  --from-literal=UPSTASH_REDIS_REST_TOKEN="your-token" \
+  --from-literal=UPSTASH_REDIS_URL="rediss://default:pass@host:port" \
+  --from-literal=JWT_SECRET="$(openssl rand -base64 64)" \
+  --from-literal=JWT_REFRESH_SECRET="$(openssl rand -base64 64)" \
+  --from-literal=CORS_ORIGIN="https://your-app.vercel.app"
+
+# Apply deployment and services
+kubectl apply -f k8s/backend-deployment.yaml
+kubectl apply -f k8s/backend-service.yaml
+kubectl apply -f k8s/pdb.yaml
+kubectl apply -f k8s/ingress.yaml
+
+# Update the image in the deployment (replace with your docker username and tag)
+kubectl set image deployment/cipherlink-backend \
+  backend=yourusername/cem-backend:latest \
+  --namespace cipherlink
+
+# Run database migration (one-time)
+kubectl run migrate --rm -it \
+  --image=yourusername/cem-backend:latest \
+  --namespace cipherlink \
+  --env-file=backend/.env \
+  --restart=Never \
+  -- node src/models/migrate.js
+```
+
+#### 3d. Verify deployment
+```bash
+# Check pods are running
+kubectl get pods -n cipherlink
+
+# Check ingress (look for ADDRESS — this is your load balancer IP)
+kubectl get ingress -n cipherlink
+
+# Check TLS certificate
+kubectl get certificate -n cipherlink
+
+# View backend logs
+kubectl logs -n cipherlink deployment/cipherlink-backend -f
+
+# Check health endpoint
+curl https://api.yourdomain.com/health
+```
 
 ---
 
-## Deployment
+### Step 4: Deploy Frontend to Vercel
 
-Push to `main` → CI/CD runs automatically:
+#### Option A: Vercel Dashboard (recommended for first deploy)
+1. Go to https://vercel.com/new → Import GitHub repo
+2. Set root directory to `frontend`
+3. Set environment variables:
+   - `VITE_API_URL` = `https://api.yourdomain.com`
+   - `VITE_WS_URL` = `wss://api.yourdomain.com`
+4. Deploy
 
-1. **GitHub Actions CI** — install deps, build frontend, verify `dist/index.html` exists
-2. **GitHub Actions Deploy** — build+push Docker images to Docker Hub, trigger Render backend deploy, deploy frontend to Vercel
-
-### Required GitHub Secrets
+#### Option B: Auto-deploy via GitHub Actions
+Set these GitHub repository secrets (Settings → Secrets → Actions):
 
 | Secret | Description |
 |--------|-------------|
-| `DOCKER_USERNAME` | Docker Hub username |
-| `DOCKER_PASSWORD` | Docker Hub access token |
-| `VITE_API_URL` | `https://cipherlink-backend.onrender.com` |
-| `VITE_WS_URL` | `wss://cipherlink-backend.onrender.com` |
-| `RENDER_DEPLOY_HOOK_URL` | Render → Settings → Deploy Hook |
-| `VERCEL_TOKEN` | vercel.com/account/tokens |
-| `VERCEL_ORG_ID` | Vercel project settings |
-| `VERCEL_PROJECT_ID` | Vercel project settings |
+| `DOCKER_USERNAME` | Your Docker Hub username |
+| `DOCKER_PASSWORD` | Your Docker Hub password/token |
+| `KUBE_CONFIG` | Base64 kubeconfig: `cat ~/.kube/config \| base64 -w 0` |
+| `DATABASE_URL` | Supabase PostgreSQL connection string |
+| `MONGODB_URI` | MongoDB Atlas connection string |
+| `UPSTASH_REDIS_REST_URL` | Upstash REST API URL |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash REST API token |
+| `UPSTASH_REDIS_URL` | Upstash `rediss://` URL for IORedis |
+| `JWT_SECRET` | 64-char random secret |
+| `JWT_REFRESH_SECRET` | 64-char random secret (different from JWT_SECRET) |
+| `CORS_ORIGIN` | Your Vercel app URL, e.g. `https://cipherlink.vercel.app` |
+| `VITE_API_URL` | `https://api.yourdomain.com` |
+| `VITE_WS_URL` | `wss://api.yourdomain.com` |
+| `VERCEL_TOKEN` | Vercel API token |
+| `VERCEL_ORG_ID` | Vercel org ID |
+| `VERCEL_PROJECT_ID` | Vercel project ID |
 
-### Run Smoke Tests
+Push to `main` → GitHub Actions builds images, deploys to K8s, and deploys frontend to Vercel automatically.
 
+---
+
+## Environment Variables Reference
+
+### Backend (`backend/.env`)
+See `backend/.env.example` for all variables with descriptions.
+
+### Frontend
+| Variable | Description |
+|----------|-------------|
+| `VITE_API_URL` | Backend REST API URL (e.g. `https://api.yourdomain.com`) |
+| `VITE_WS_URL` | Backend WebSocket URL (e.g. `wss://api.yourdomain.com`) |
+
+---
+
+## Troubleshooting
+
+### Pods not starting / CrashLoopBackOff
 ```bash
-# After make up
-./scripts/smoke-test.sh
+kubectl describe pod -n cipherlink <pod-name>
+kubectl logs -n cipherlink <pod-name> --previous
+```
+Common causes: missing secrets, wrong DATABASE_URL format, MongoDB connection timeout.
 
-# Against production
-API_URL=https://cipherlink-backend.onrender.com ./scripts/smoke-test.sh
+### WebSocket connections failing
+1. Check ingress annotations: `nginx.ingress.kubernetes.io/proxy-read-timeout` must be `"3600"`
+2. Verify the ingress has TLS configured (wss:// requires HTTPS on the ingress)
+3. Check CORS_ORIGIN includes your Vercel domain
+
+### "Invalid token" on WebSocket connect
+The JWT access token expired. The frontend will redirect to login. Check that `JWT_EXPIRES_IN=15m` is set.
+
+### Messages not appearing on second pod
+Verify `UPSTASH_REDIS_URL` is set correctly — cross-pod delivery uses IORedis pub/sub.
+
+### Rate limit errors (429)
+Rate limits are Redis-backed and shared across pods. Limits: 120 req/min general, 20 req/15min for auth endpoints.
+
+### Database migration
+```bash
+# Run once after first deployment, or when schema changes
+kubectl run migrate --rm -it \
+  --image=yourusername/cem-backend:latest \
+  --namespace cipherlink \
+  --restart=Never \
+  -- node src/models/migrate.js
 ```
 
 ---
 
-## Project Structure
+## Security Notes
 
-```
-realtime-encrypted-messenger/
-├── backend/
-│   ├── src/
-│   │   ├── config/          # DB, Redis, env validation
-│   │   ├── controllers/     # HTTP request handlers
-│   │   ├── middleware/       # Auth (JWT + blacklist), errors, rate limiting
-│   │   ├── models/          # Mongoose Message schema + PostgreSQL migrations
-│   │   ├── routes/          # auth, rooms, messages, users
-│   │   ├── services/        # Business logic (auth, rooms, messages, presence)
-│   │   └── websocket/       # WS server, event router, Redis pub/sub
-│   ├── Dockerfile           # Multi-stage, non-root
-│   └── render.yaml          # Render deploy config
-├── frontend/
-│   ├── src/
-│   │   ├── crypto/          # ECDH keygen, AES-GCM cipher, IndexedDB key store
-│   │   ├── hooks/           # useAuth, useEncryption, useWebSocket
-│   │   ├── components/      # Chat, MessageList, MessageInput, ConversationList
-│   │   ├── pages/           # Login, Register
-│   │   └── services/        # API (axios + interceptors), WS client, key exchange
-│   └── vercel.json          # Vercel deploy config
-├── k8s/                     # 11 Kubernetes manifests (HPA 2-10 pods)
-├── nginx/                   # Reverse proxy config
-├── scripts/
-│   └── smoke-test.sh        # E2E smoke tests (bash + curl)
-├── Makefile                 # Dev shortcuts
-└── docker-compose.yml       # Local full stack
-```
+- **E2E Encryption**: ECDH key exchange + AES-GCM. Private keys never leave the browser (stored in IndexedDB).
+- **JWT**: 15-minute access tokens + 30-day rotating refresh tokens. Logout blacklists the JTI in Redis.
+- **Refresh tokens**: Stored as SHA-256 hashes in PostgreSQL. Token rotation on every refresh.
+- **Rate limiting**: Redis-backed, shared across all pods.
+- **Secrets**: Never committed to git. K8s Secrets + GitHub Actions secrets only.
