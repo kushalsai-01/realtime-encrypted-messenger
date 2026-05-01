@@ -1,6 +1,20 @@
+# docker-compose.yml — Local development environment
+#
+# Prerequisites: copy backend/.env.example to backend/.env and fill in:
+#   MONGODB_URI, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN,
+#   UPSTASH_REDIS_URL, JWT_SECRET, JWT_REFRESH_SECRET
+#
+# Then run: docker-compose up --build
+#
+# Note: This compose uses a local PostgreSQL container for development.
+# Redis for PubSub uses Upstash (UPSTASH_REDIS_URL from .env).
+# If you want fully local Redis (no Upstash needed for dev), set
+# UPSTASH_REDIS_URL=redis://redis:6379 and all UPSTASH_* vars to dummy values.
+
 version: '3.9'
 
 services:
+  # ─── Local PostgreSQL (replaces Supabase for dev) ────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: cem_postgres
@@ -19,21 +33,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # ─── Local Redis (for pub/sub + rate limiting + presence + offline queue) ─────
+  # Set UPSTASH_REDIS_URL=redis://redis:6379 in backend/.env to use this instead of Upstash.
   redis:
     image: redis:7-alpine
     container_name: cem_redis
     restart: unless-stopped
-    command: redis-server --requirepass devredispass --appendonly yes
+    command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "devredispass", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ─── Backend ──────────────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -42,12 +59,16 @@ services:
     container_name: cem_backend
     restart: unless-stopped
     env_file:
-      - ./backend/.env.example
+      - ./backend/.env
     environment:
       NODE_ENV: development
-      PORT: 3000
+      PORT: "3000"
+      SERVER_ID: backend-local
+      # Override DATABASE_URL to point to the local postgres container
       DATABASE_URL: postgres://cipherlink:devpassword123@postgres:5432/cipherlink
-      REDIS_URL: redis://:devredispass@redis:6379
+      # Override Redis to use local container (comment out to use Upstash from .env)
+      UPSTASH_REDIS_URL: redis://redis:6379
+      CORS_ORIGIN: http://localhost:5173,http://localhost:80
     ports:
       - "3000:3000"
     depends_on:
@@ -59,22 +80,27 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
+      start_period: 45s
       retries: 3
 
+  # ─── Frontend ─────────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: http://localhost:3000
-        VITE_WS_URL: ws://localhost:3000
+        # Points to the nginx reverse proxy (port 80) which routes /api and /ws to backend
+        VITE_API_URL: http://localhost:80
+        VITE_WS_URL: ws://localhost:80
     container_name: cem_frontend
     restart: unless-stopped
     ports:
       - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
+  # ─── Nginx reverse proxy (routes /api and /ws to backend, everything else to frontend) ──
   nginx:
     image: nginx:1.25-alpine
     container_name: cem_nginx
