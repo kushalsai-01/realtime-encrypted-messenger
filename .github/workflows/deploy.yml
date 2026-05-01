@@ -1,28 +1,39 @@
-name: Build + Deploy
+name: Build, Push & Deploy
 
 on:
   push:
     branches: [main]
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  REGISTRY: docker.io
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
+  # ─── Job 1: Build and push Docker images ──────────────────────────────────────
   build-and-push:
     name: Build + Push Docker Images
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - uses: docker/login-action@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Push backend image
+      # ─── Backend image ───────────────────────────────────────────────────────
+      - name: Build & push backend image
         uses: docker/build-push-action@v5
         with:
           context: ./backend
@@ -34,7 +45,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Push frontend image
+      # ─── Frontend image ──────────────────────────────────────────────────────
+      # Note: VITE_API_URL and VITE_WS_URL are baked into the frontend at build time.
+      # For Vercel deployments, the frontend is deployed separately (see deploy-frontend job).
+      # This image is only used if you're running the frontend in K8s.
+      - name: Build & push frontend image
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
@@ -49,19 +64,82 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
-    name: Deploy
+  # ─── Job 2: Deploy backend to Kubernetes ─────────────────────────────────────
+  deploy-backend:
+    name: Deploy Backend to K8s
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Render deploy
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure kubeconfig
+        # KUBE_CONFIG is the base64-encoded kubeconfig for your cluster.
+        # Generate with: cat ~/.kube/config | base64 -w 0
+        # Then add as a GitHub secret named KUBE_CONFIG.
         run: |
-          curl -s "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" -X POST --fail
-          echo "Render deploy triggered ✓"
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
 
-      - uses: actions/checkout@v4
+      - name: Apply K8s namespace and configs
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/backend-service.yaml
+          kubectl apply -f k8s/pdb.yaml
 
-      - name: Deploy frontend to Vercel
+      - name: Create/update K8s secrets
+        # Secrets are set via GitHub Actions secrets — never committed to git.
+        run: |
+          kubectl create secret generic cipherlink-secrets \
+            --namespace cipherlink \
+            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            --from-literal=MONGODB_URI="${{ secrets.MONGODB_URI }}" \
+            --from-literal=UPSTASH_REDIS_REST_URL="${{ secrets.UPSTASH_REDIS_REST_URL }}" \
+            --from-literal=UPSTASH_REDIS_REST_TOKEN="${{ secrets.UPSTASH_REDIS_REST_TOKEN }}" \
+            --from-literal=UPSTASH_REDIS_URL="${{ secrets.UPSTASH_REDIS_URL }}" \
+            --from-literal=JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+            --from-literal=JWT_REFRESH_SECRET="${{ secrets.JWT_REFRESH_SECRET }}" \
+            --from-literal=CORS_ORIGIN="${{ secrets.CORS_ORIGIN }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy backend with new image tag
+        run: |
+          # Substitute the image tag in the deployment manifest
+          sed "s|DOCKER_USERNAME/cem-backend:IMAGE_TAG|${{ secrets.DOCKER_USERNAME }}/cem-backend:${{ github.sha }}|g" \
+            k8s/backend-deployment.yaml | kubectl apply -f -
+
+      - name: Apply ingress
+        run: kubectl apply -f k8s/ingress.yaml
+
+      - name: Wait for rollout to complete
+        run: |
+          kubectl rollout status deployment/cipherlink-backend \
+            --namespace cipherlink \
+            --timeout=300s
+
+      - name: Verify backend health
+        run: |
+          echo "Deployment complete — checking pod status"
+          kubectl get pods -n cipherlink -l app=cipherlink-backend
+          kubectl get ingress -n cipherlink
+
+  # ─── Job 3: Deploy frontend to Vercel ────────────────────────────────────────
+  deploy-frontend:
+    name: Deploy Frontend to Vercel
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Vercel
         uses: amondnet/vercel-action@v25
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
