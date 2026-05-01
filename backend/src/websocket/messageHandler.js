@@ -2,13 +2,13 @@ import { Message } from '../models/Message.js'
 import { queueMessage } from '../services/offlineQueueService.js'
 import { setOnline, getPresence } from '../services/presenceService.js'
 import { markRead } from '../services/messageService.js'
-import { updateLastRead } from '../services/roomService.js'
+import { assertMember, getRoomMembers, updateLastRead } from '../services/roomService.js'
 import { getConnection } from './connectionManager.js'
 import { publish } from './redisPubSub.js'
 import { config } from '../config/env.js'
 
 function send(ws, payload) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload))
+  if (ws?.readyState === 1) ws.send(JSON.stringify(payload))
 }
 
 export async function routeMessage(ws, senderId, packet, wss) {
@@ -19,6 +19,13 @@ export async function routeMessage(ws, senderId, packet, wss) {
       const { recipientId, conversationId, ciphertext, iv, replyToId } = payload
       if (!recipientId || !conversationId || !ciphertext || !iv) {
         send(ws, { type: 'error', message: 'Missing required fields' })
+        return
+      }
+      await assertMember(conversationId, senderId)
+      const members = await getRoomMembers(conversationId)
+      const memberIds = new Set(members.map((m) => m.id))
+      if (!memberIds.has(recipientId) || recipientId === senderId) {
+        send(ws, { type: 'error', message: 'Invalid recipient for this conversation' })
         return
       }
       const saved = await Message.create({
@@ -44,20 +51,32 @@ export async function routeMessage(ws, senderId, packet, wss) {
           readBy: []
         }
       }
+
+      // CRIT-3: Only publish to Redis pub/sub if the recipient is NOT on this server.
+      // Previously publish() was called unconditionally, causing duplicate delivery when
+      // both sender and recipient were on the same pod (local send + redis re-delivery).
       const recipientSocket = getConnection(recipientId)
       if (recipientSocket && recipientSocket.readyState === recipientSocket.OPEN) {
+        // Recipient is local — deliver directly, skip pub/sub
         recipientSocket.send(JSON.stringify(event))
       } else {
-        await queueMessage(recipientId, event.data)
+        // Recipient is on another pod (or offline) — publish for cross-pod delivery
+        await publish({ ...event, targetUserId: recipientId })
+        // If truly offline, also queue for drain-on-reconnect
+        const presence = await getPresence(recipientId)
+        if (!presence) {
+          await queueMessage(recipientId, event.data)
+        }
       }
+
       send(ws, { type: 'message:sent', data: { id: String(saved._id) } })
-      await publish({ ...event, targetUserId: recipientId })
       break
     }
 
     case 'typing:start': {
       const { conversationId } = payload
       if (!conversationId) return
+      await assertMember(conversationId, senderId)
       const recipientSocket = getRecipientInConversation(conversationId, senderId)
       if (recipientSocket) {
         send(recipientSocket, { type: 'typing:start', data: { userId: senderId, conversationId } })
@@ -68,6 +87,7 @@ export async function routeMessage(ws, senderId, packet, wss) {
     case 'typing:stop': {
       const { conversationId } = payload
       if (!conversationId) return
+      await assertMember(conversationId, senderId)
       const recipientSocket = getRecipientInConversation(conversationId, senderId)
       if (recipientSocket) {
         send(recipientSocket, { type: 'typing:stop', data: { userId: senderId, conversationId } })
@@ -78,6 +98,7 @@ export async function routeMessage(ws, senderId, packet, wss) {
     case 'messages:read': {
       const { conversationId, lastMessageId } = payload
       if (!conversationId || !lastMessageId) return
+      await assertMember(conversationId, senderId)
       await markRead(conversationId, senderId, lastMessageId)
       await updateLastRead(conversationId, senderId, lastMessageId)
       const recipientSocket = getRecipientInConversation(conversationId, senderId)
@@ -114,6 +135,7 @@ export async function routeMessage(ws, senderId, packet, wss) {
       if (!messageId || !emoji) return
       const msg = await Message.findById(messageId)
       if (!msg || msg.deleted) return
+      await assertMember(msg.conversationId, senderId)
       const idx = msg.reactions.findIndex((r) => r.userId === senderId && r.emoji === emoji)
       if (idx >= 0) msg.reactions.splice(idx, 1)
       else msg.reactions.push({ userId: senderId, emoji })
@@ -130,6 +152,7 @@ export async function routeMessage(ws, senderId, packet, wss) {
       if (!messageId) return
       const msg = await Message.findById(messageId)
       if (!msg || msg.senderId !== senderId) return
+      await assertMember(msg.conversationId, senderId)
       msg.deleted = true
       msg.ciphertext = ''
       msg.iv = ''
