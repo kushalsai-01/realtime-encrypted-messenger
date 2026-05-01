@@ -3,11 +3,14 @@ kind: Service
 metadata:
   name: cipherlink-backend
   namespace: cipherlink
+  labels:
+    app: cipherlink-backend
 spec:
   selector:
     app: cipherlink-backend
   ports:
-    - protocol: TCP
+    - name: http
+      protocol: TCP
       port: 3000
       targetPort: 3000
   type: ClusterIP

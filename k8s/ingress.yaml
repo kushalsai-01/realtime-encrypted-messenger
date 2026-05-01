@@ -4,19 +4,40 @@ metadata:
   name: cipherlink-ingress
   namespace: cipherlink
   annotations:
+    # TLS termination via cert-manager (Let's Encrypt)
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+    # ─── WebSocket support ────────────────────────────────────────────────────
+    # These are the REQUIRED annotations for nginx ingress to proxy WebSocket connections.
+    # The configuration-snippet approach is unreliable across ingress versions.
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      proxy_set_header Upgrade $http_upgrade;
-      proxy_set_header Connection "upgrade";
+
+    # Enable WebSocket upgrade headers (the correct annotation, not configuration-snippet)
+    nginx.ingress.kubernetes.io/proxy-set-headers: "cipherlink/ws-headers"
+
+    # ─── Other settings ───────────────────────────────────────────────────────
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # CORS is handled by the Express backend — do not duplicate here
+    nginx.ingress.kubernetes.io/enable-cors: "false"
+
+    # Rate limiting at ingress level (backup for the app-level limiter)
+    nginx.ingress.kubernetes.io/limit-rps: "30"
 spec:
   ingressClassName: nginx
+  # TLS — cert-manager will provision the certificate automatically
+  tls:
+    - hosts:
+        - api.yourdomain.com
+      secretName: cipherlink-tls
   rules:
-    - host: realtime-encrypted-messenger.com
+    - host: api.yourdomain.com
       http:
         paths:
+          # WebSocket endpoint — MUST come before /api to avoid path conflict
           - path: /ws
             pathType: Prefix
             backend:
@@ -24,6 +45,7 @@ spec:
                 name: cipherlink-backend
                 port:
                   number: 3000
+          # REST API
           - path: /api
             pathType: Prefix
             backend:
@@ -31,10 +53,11 @@ spec:
                 name: cipherlink-backend
                 port:
                   number: 3000
-          - path: /
-            pathType: Prefix
+          # Health check (optional — useful for external monitoring)
+          - path: /health
+            pathType: Exact
             backend:
               service:
-                name: cipherlink-frontend
+                name: cipherlink-backend
                 port:
-                  number: 80
+                  number: 3000

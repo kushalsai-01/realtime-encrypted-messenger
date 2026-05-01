@@ -1,0 +1,14 @@
+# PodDisruptionBudget — IMP-10
+# Ensures at least 1 backend pod is always available during:
+# - Voluntary disruptions (node drain, rolling updates, cluster upgrades)
+# - Prevents zero-downtime violations during deployments
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cipherlink-backend-pdb
+  namespace: cipherlink
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: cipherlink-backend

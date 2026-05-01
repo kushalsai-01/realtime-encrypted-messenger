@@ -1,3 +1,13 @@
+# ConfigMap for WebSocket upgrade headers (referenced by ingress)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ws-headers
+  namespace: cipherlink
+data:
+  Upgrade: "$http_upgrade"
+  Connection: "upgrade"
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,3 +18,5 @@ data:
   PORT: "3000"
   JWT_EXPIRES_IN: "15m"
   JWT_REFRESH_EXPIRES_IN: "7d"
+  # SERVER_ID is set per-pod from metadata.name in the Deployment spec
+  # CORS_ORIGIN is set via secrets (contains your Vercel domain)
