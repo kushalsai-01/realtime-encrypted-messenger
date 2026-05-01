@@ -31,4 +31,9 @@ const messageSchema = new Schema(
   { timestamps: true }
 )
 
+// IMP-G6: Compound index for efficient paginated message queries.
+// The primary query pattern is: find by conversationId, sorted by createdAt DESC.
+// Without this compound index, MongoDB does a full collection scan at scale.
+messageSchema.index({ conversationId: 1, createdAt: -1 })
+
 export const Message = model('Message', messageSchema)

@@ -1,4 +1,5 @@
 import { Message } from '../models/Message.js'
+import mongoose from 'mongoose'
 
 export async function saveMessage(payload) {
   return Message.create(payload)
@@ -35,9 +36,19 @@ export async function toggleReaction(messageId, userId, emoji) {
   return msg.reactions
 }
 
+// CRIT-7: Fixed ObjectId comparison in markRead.
+// Previously compared _id (ObjectId) with a raw string using $lte which silently fails
+// due to BSON type mismatch. Now correctly casts lastMessageId to ObjectId before comparison.
 export async function markRead(conversationId, userId, lastMessageId) {
+  let lastIdObj
+  try {
+    lastIdObj = new mongoose.Types.ObjectId(lastMessageId)
+  } catch {
+    // Invalid ObjectId — silently skip (malformed input shouldn't crash)
+    return
+  }
   await Message.updateMany(
-    { conversationId, _id: { $lte: lastMessageId } },
+    { conversationId, _id: { $lte: lastIdObj } },
     { $addToSet: { readBy: { userId, readAt: new Date() } } }
   )
 }
